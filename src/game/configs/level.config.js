@@ -1,5 +1,5 @@
 export const LevelConfig = {
-    1: { targetTanks: 1, targetTowers: 0, targetInfantry: 5, targetHangars: 0, targetFlaks: 0, enemySpeedMultiplier: 1.0, spawnIntervalMultiplier: 1.0 },
+    1: { targetTanks: 1, targetTowers: 1, targetInfantry: 5, targetHangars: 1, targetFlaks: 1, enemySpeedMultiplier: 1.0, spawnIntervalMultiplier: 1.0 },
     2: { targetTanks: 5, targetTowers: 2, targetInfantry: 15, targetHangars: 0, targetFlaks: 0, enemySpeedMultiplier: 1.1, spawnIntervalMultiplier: 0.9 },
     3: { targetTanks: 7, targetTowers: 2, targetInfantry: 20, targetHangars: 0, targetFlaks: 1, enemySpeedMultiplier: 1.2, spawnIntervalMultiplier: 0.8 },
     4: { targetTanks: 9, targetTowers: 3, targetInfantry: 25, targetHangars: 0, targetFlaks: 2, targetDrones: 3, enemySpeedMultiplier: 1.3, spawnIntervalMultiplier: 0.8 },
