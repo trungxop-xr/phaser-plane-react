@@ -549,11 +549,12 @@ export class MainScene extends Phaser.Scene {
         this.setupTimers();
 
         // Initial Spawning
+        // Initial Spawning (Order: Static -> Mobile to ensure placement)
+        if (levelData.targetHangars > 0) this.spawnInitialHangars(levelData.targetHangars + 1);
+        if (levelData.targetFlaks > 0) this.spawnInitialFlaks(levelData.targetFlaks + 2);
+        if (levelData.targetTowers > 0) this.spawnInitialTowers(levelData.targetTowers + 1);
         if (levelData.targetTanks > 0) this.spawnInitialTanks(levelData.targetTanks + 2);
         if (levelData.targetT95 > 0) this.spawnInitialT95Tanks(levelData.targetT95);
-        if (levelData.targetTowers > 0) this.spawnInitialTowers(levelData.targetTowers + 1);
-        if (levelData.targetHangars > 0) this.spawnInitialHangars(levelData.targetHangars + 1);
-        if (levelData.targetFlaks > 0) this.spawnInitialFlaks(levelData.targetFlaks);
         if (levelData.targetInfantry > 0) this.spawnInitialInfantry(levelData.targetInfantry);
 
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -1140,6 +1141,14 @@ export class MainScene extends Phaser.Scene {
         this.shootTimer = this.time.addEvent({ delay: WeaponConfig.tankBullet.fireRate, callback: this.tankShoot, callbackScope: this, loop: true });
         this.powerupTimer = this.time.addEvent({ delay: 5000, callback: this.spawnPowerup, callbackScope: this, loop: true });
 
+        // periodic reinforcement check (every 5 seconds)
+        this.reinforcementTimer = this.time.addEvent({
+            delay: 5000,
+            callback: this.checkReinforcements,
+            callbackScope: this,
+            loop: true
+        });
+
         if (levelData.targetHangars > 0) {
             this.hangarSpawnTimer = this.time.addEvent({
                 delay: 12000 * levelData.spawnIntervalMultiplier,
@@ -1159,29 +1168,96 @@ export class MainScene extends Phaser.Scene {
         }
     }
 
-    spawnTank() {
+    checkReinforcements() {
+        if (this.isPaused || this.isGameOver) return;
+        const levelData = LevelConfig[this.currentLevel];
+
+        // Check Tanks
+        if (levelData.targetTanks > 0) {
+            const current = (this.tanks ? this.tanks.countActive(true) : 0) + this.tanksDestroyed;
+            if (current < levelData.targetTanks) this.spawnSingleTank();
+        }
+
+        // Check T95
+        if (levelData.targetT95 > 0) {
+            const current = (this.t95Tanks ? this.t95Tanks.countActive(true) : 0) + this.t95Destroyed;
+            if (current < levelData.targetT95) this.spawnSingleT95Tank();
+        }
+
+        // Check Towers
+        if (levelData.targetTowers > 0) {
+            const current = (this.watchtowers ? this.watchtowers.countActive(true) : 0) + this.towersDestroyed;
+            if (current < levelData.targetTowers) this.spawnSingleTower();
+        }
+
+        // Check Flaks
+        if (levelData.targetFlaks > 0) {
+            const current = (this.flakCannons ? this.flakCannons.countActive(true) : 0) + (this.flaksDestroyed || 0);
+            if (current < levelData.targetFlaks) this.spawnSingleFlak();
+        }
+
+        // Check Hangars
+        if (levelData.targetHangars > 0) {
+            const current = (this.hangars ? this.hangars.countActive(true) : 0) + this.hangarsDestroyed;
+            if (current < levelData.targetHangars) this.spawnSingleHangar();
+        }
+    }
+
+    spawnSingleTank() {
         if (this.isPaused || this.isGameOver) return;
         const x = Phaser.Math.Between(100, this.worldWidth - 100);
         if (this.isSpaceEmpty(x, 80)) {
             const levelMult = LevelConfig[this.currentLevel].enemySpeedMultiplier;
-            const groundOffset = this.enemyStats.tank.groundOffset;
-            const y = this.getTerrainHeight(x) - groundOffset;
+            const y = this.getTerrainHeight(x) - 15;
             const tank = new Tank(this, x, y, 'tankTexture' + this.textureSuffix, 100, 150 * levelMult, this.getTerrainHeight.bind(this));
             this.tanks.add(tank);
-            if (Math.random() < 0.4) this.spawnInfantrySquad(x + Phaser.Math.Between(-100, 100));
         }
     }
 
-    spawnT95Tank() {
+    spawnSingleT95Tank() {
         if (this.isPaused || this.isGameOver) return;
         const x = Phaser.Math.Between(100, this.worldWidth - 100);
-        if (this.isSpaceEmpty(x, 90)) {
+        if (this.isSpaceEmpty(x, 100)) {
             const config = this.enemyStats.t95;
             const levelMult = LevelConfig[this.currentLevel].enemySpeedMultiplier;
             const y = this.getTerrainHeight(x) - config.groundOffset;
             const tank = new T95Tank(this, x, y, 't95TankTexture' + this.textureSuffix, config.hp, config.speed * levelMult, this.getTerrainHeight.bind(this));
             this.t95Tanks.add(tank);
-            if (Math.random() < 0.6) this.spawnInfantrySquad(x + Phaser.Math.Between(-120, 120));
+        }
+    }
+
+    spawnSingleTower() {
+        if (this.isPaused || this.isGameOver) return;
+        const x = Phaser.Math.Between(150, this.worldWidth - 150);
+        if (this.isSpaceEmpty(x, 100)) {
+            const groundOffset = EnemyConfig.tower.groundOffset;
+            const y = this.getTerrainHeight(x) - groundOffset;
+            const hp = EnemyConfig.tower.hp;
+            const tower = new Tower(this, x, y, 'towerTexture' + this.textureSuffix, hp);
+            this.watchtowers.add(tower);
+        }
+    }
+
+    spawnSingleFlak() {
+        if (this.isPaused || this.isGameOver) return;
+        const x = Phaser.Math.Between(200, this.worldWidth - 200);
+        if (this.isSpaceEmpty(x, 120)) {
+            const groundOffset = this.enemyStats.flakCannon.groundOffset;
+            const y = this.getTerrainHeight(x) - groundOffset;
+            const hp = this.enemyStats.flakCannon.hp;
+            const flak = new FlakCannon(this, x, y, hp);
+            this.flakCannons.add(flak);
+        }
+    }
+
+    spawnSingleHangar() {
+        if (this.isPaused || this.isGameOver) return;
+        const x = Phaser.Math.Between(200, this.worldWidth - 200);
+        if (this.isSpaceEmpty(x, 150)) {
+            const groundOffset = this.enemyStats.hangar.groundOffset;
+            const y = this.getTerrainHeight(x) - groundOffset;
+            const hangar = new DroneHangar(this, x, y, 'hangarTexture' + this.textureSuffix);
+            this.hangars.add(hangar);
         }
     }
 
@@ -1233,7 +1309,7 @@ export class MainScene extends Phaser.Scene {
     spawnInitialTowers(count) {
         let spawned = 0;
         let attempts = 0;
-        while (spawned < count && attempts < 50) {
+        while (spawned < count && attempts < 100) {
             const x = Phaser.Math.Between(150, this.worldWidth - 150);
             if (this.isSpaceEmpty(x, 100)) {
                 const groundOffset = EnemyConfig.tower.groundOffset;
@@ -1250,7 +1326,7 @@ export class MainScene extends Phaser.Scene {
     spawnInitialHangars(count) {
         let spawned = 0;
         let attempts = 0;
-        while (spawned < count && attempts < 50) {
+        while (spawned < count && attempts < 100) {
             const x = Phaser.Math.Between(200, this.worldWidth - 200);
             if (this.isSpaceEmpty(x, 150)) {
                 const groundOffset = this.enemyStats.hangar.groundOffset;
@@ -1267,7 +1343,7 @@ export class MainScene extends Phaser.Scene {
     spawnInitialFlaks(count) {
         let spawned = 0;
         let attempts = 0;
-        while (spawned < count && attempts < 50) {
+        while (spawned < count && attempts < 100) {
             const x = Phaser.Math.Between(200, this.worldWidth - 200);
             if (this.isSpaceEmpty(x, 120)) {
                 const groundOffset = this.enemyStats.flakCannon.groundOffset;
