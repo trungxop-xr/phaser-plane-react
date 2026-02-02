@@ -1,0 +1,71 @@
+body {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #242424;
+  color: white;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+canvas {
+  display: block;
+}
+
+.hud {
+  position: absolute;
+  top: 20px;
+  width: 100%;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: 'Arial', sans-serif;
+}
+
+.hud-top {
+  display: flex;
+  justify-content: space-between;
+  width: 90%;
+  max-width: 800px;
+}
+
+.hp-bar-container {
+  position: absolute;
+  left: 20px;
+  top: 20px;
+  width: 200px;
+  height: 20px;
+  background: #000;
+  border: 2px solid #fff;
+}
+
+.hp-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease-out;
+}
+
+.score-display {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.level-display {
+  font-size: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 5px 20px;
+  border-radius: 10px;
+}
