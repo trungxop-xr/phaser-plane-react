@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
 
 export class Tank extends Phaser.Physics.Arcade.Sprite {
-    constructor(scene, x, y, texture, hp, speed, terrainFn) {
-        // Use tankBodyTexture for the base
-        super(scene, x, y, 'tankBodyTexture' + scene.textureSuffix);
+    constructor(scene, x, y, texture, hp, speed, terrainFn, configKey = 'tank', bodyTexture = 'tankBodyTexture', turretTexture = 'tankTurretTexture') {
+        // Use custom bodyTexture for the base
+        super(scene, x, y, bodyTexture + scene.textureSuffix);
         scene.add.existing(this);
         scene.physics.add.existing(this);
 
-        const config = scene.enemyStats.tank;
+        this.configKey = configKey;
+        const config = scene.enemyStats[configKey];
         this.body.allowGravity = false;
         this.body.immovable = true;
         this.body.setSize(60, 30);
@@ -22,7 +23,7 @@ export class Tank extends Phaser.Physics.Arcade.Sprite {
         this.baseSpeed = speed;
 
         // Turret Sprite (Attached to Tank)
-        this.turret = scene.add.sprite(x, y - 10, 'tankTurretTexture' + scene.textureSuffix);
+        this.turret = scene.add.sprite(x, y - 10, turretTexture + scene.textureSuffix);
         this.turret.setDepth(1.1); // Slightly above tank body
         this.turret.setScale(config.scale);
         this.turret.setOrigin(0.3, 0.5); // Pivot near the back of the turret
@@ -76,7 +77,16 @@ export class Tank extends Phaser.Physics.Arcade.Sprite {
             this.body.setVelocityX(Phaser.Math.Between(-this.baseSpeed, this.baseSpeed));
         }
 
-        // Cleanup if OOB
+        // Boundary Check (X-axis)
+        if (this.x < 50) {
+            this.x = 50;
+            this.body.setVelocityX(Math.abs(this.body.velocity.x)); // Move Right
+        } else if (this.x > this.scene.worldWidth - 50) {
+            this.x = this.scene.worldWidth - 50;
+            this.body.setVelocityX(-Math.abs(this.body.velocity.x)); // Move Left
+        }
+
+        // Cleanup if OOB (Y-axis)
         if (this.y > this.scene.worldHeight + 100) {
             this.destroy();
         }
@@ -86,7 +96,7 @@ export class Tank extends Phaser.Physics.Arcade.Sprite {
         if (!this.active || !this.turret.active) return;
 
         // Calculate muzzle position (tip of the barrel)
-        const config = this.scene.enemyStats.tank;
+        const config = this.scene.enemyStats[this.configKey];
         const muzzleDist = config.muzzleDist;
         const muzzlePos = new Phaser.Math.Vector2(muzzleDist, 0).rotate(this.turret.rotation);
         const spawnX = this.turret.x + muzzlePos.x;

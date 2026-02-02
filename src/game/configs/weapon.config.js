@@ -59,6 +59,13 @@ export const WeaponConfig = {
         range: 600,
         trigger: 'AUTO'
     },
+    t95Bullet: {
+        fireRate: 1500,
+        speed: 450,
+        damage: 80,
+        range: 800,
+        trigger: 'AUTO'
+    },
     homingMissile: {
         fireRate: 10000,
         speed: 0,
@@ -90,5 +97,14 @@ export const WeaponConfig = {
         directDamage: 120,    // Damage dealt on direct impact
         splashDamage: 50,     // Damage dealt by the explosion cloud
         explosionRadius: 15   // Visual and damage radius of the explosion (px)
+    },
+    flamethrower: {
+        range: 400,
+        damagePerSecond: 20,
+        fuelConsumption: 1, // 1 unit per second
+        initialFuel: 100,
+        burnDuration: 2000, // 2 seconds in ms
+        groundFireDuration: 3000, // 3 seconds in ms
+        trigger: 'KEY_5'
     }
 };

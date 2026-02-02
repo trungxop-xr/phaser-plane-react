@@ -16,13 +16,97 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
         this.hp = PlayerConfig.hp;
         this.currentSpeed = PlayerConfig.speed;
 
+        // Autopilot Properties
+        this.isAutopilot = false;
+        this.autopilotHoldTime = 0;
+        this.isTurning = false;
+        this.turnPhase = 0;
+        this.turnTimer = 0;
+
+        // Flamethrower state
+        this.isFiringFlamethrower = false;
+        this.flamethrowerFuel = 100; // Default fuel 100
+
         // Notify initial HP
         this.emitHpUpdate();
     }
 
-    update(cursors, delta) {
+    update(cursors, delta, obstacles) {
         if (!this.active) return;
 
+        // 1. Activation Logic (Hold '0' for 2s)
+        if (cursors.key0 && cursors.key0.isDown) {
+            this.autopilotHoldTime += delta;
+
+            // Countdown Logic
+            const timeLeft = 2000 - this.autopilotHoldTime;
+            if (timeLeft > 0) {
+                // Show countdown only if not locked
+                if (!this.autopilotToggleLock) {
+                    this.scene.hud.showAutopilotCountdown(timeLeft);
+                }
+            }
+
+            if (this.autopilotHoldTime >= 2000 && !this.autopilotToggleLock) {
+                this.toggleAutopilot();
+                this.autopilotToggleLock = true; // Prevent rapid toggling
+            }
+        } else {
+            this.autopilotHoldTime = 0;
+            this.autopilotToggleLock = false;
+        }
+
+        // Flamethrower firing check (Key 5)
+        this.isFiringFlamethrower = false;
+        if (cursors.key5 && cursors.key5.isDown) {
+            const unlocked = this.scene.levelStats?.unlockedWeapons || [];
+            if (!unlocked.includes('flamethrower')) {
+                if (Phaser.Input.Keyboard.JustDown(cursors.key5)) {
+                    this.scene.showWeaponMessage('LOCKED');
+                }
+            } else if (this.flamethrowerFuel > 0) {
+                this.isFiringFlamethrower = true;
+                // Consume fuel: 1 unit per second (delta is in ms)
+                this.flamethrowerFuel = Math.max(0, this.flamethrowerFuel - (1 * delta / 1000));
+                // Trigger HUD update if needed via scene
+                this.scene.events.emit('update-ammo', { type: 'flamethrower', count: this.flamethrowerFuel });
+            }
+        }
+
+        if (this.isAutopilot) {
+            this.updateAutopilot(cursors, delta, obstacles);
+        } else {
+            this.updateManual(cursors, delta);
+        }
+
+        this.scene.physics.velocityFromRotation(this.rotation, this.currentSpeed, this.body.velocity);
+    }
+
+    toggleAutopilot() {
+        this.isAutopilot = !this.isAutopilot;
+        this.isTurning = false;
+
+        // Notify HUD
+        this.scene.hud.setAutopilotStatus(this.isAutopilot);
+        EventBus.emit('update-autopilot', this.isAutopilot);
+
+        // Visual FX on Plane
+        if (this.isAutopilot) {
+            // Shake Plane
+            this.scene.tweens.add({
+                targets: this,
+                x: '+=5',
+                duration: 50,
+                yoyo: true,
+                repeat: 5
+            });
+            // Flash
+            this.setTint(0x00ff00);
+            this.scene.time.delayedCall(300, () => this.clearTint());
+        }
+    }
+
+    updateManual(cursors, delta) {
         // Rotation
         if (cursors.left.isDown) {
             this.setAngularVelocity(-PlayerConfig.rotationSpeed);
@@ -45,7 +129,147 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
                 this.currentSpeed = Math.min(PlayerConfig.speed, this.currentSpeed + PlayerConfig.accelRate * delta);
             }
         }
+    }
 
+    updateAutopilot(cursors, delta, obstacles) {
+        // 4. Priority: No Speed Control
+        // Maintain base speed
+        if (this.currentSpeed > PlayerConfig.speed) {
+            this.currentSpeed -= PlayerConfig.accelRate * delta;
+        } else if (this.currentSpeed < PlayerConfig.speed) {
+            this.currentSpeed += PlayerConfig.accelRate * delta;
+        }
+
+        // 3. Auto-Turn Logic
+        if (this.isTurning) {
+            this.performUTurn(delta);
+            return;
+        }
+
+        // Check for manual turn input or world bounds
+        const isFlyingRight = Math.abs(this.rotation) < Math.PI / 2;
+        const outOfBoundsLeft = this.x < 250 && !isFlyingRight;
+        const outOfBoundsRight = this.x > this.scene.worldWidth - 250 && isFlyingRight;
+
+        // Manual input overrides (Reverse direction)
+        const manualTurn = (cursors.left.isDown && isFlyingRight) || (cursors.right.isDown && !isFlyingRight);
+
+        if (outOfBoundsLeft || outOfBoundsRight || manualTurn) {
+            this.startUTurn();
+            return;
+        }
+
+        // 2. Terrain Following & Obstacle Avoidance
+        const terrainY = this.scene.getTerrainHeight(this.x);
+        let targetY = terrainY - 40; // Default 20px clearance (origin is center, verify offsets)
+
+        // Obstacle Avoidance
+        const detectionRange = 150;
+        let obstacleFound = false;
+
+        if (obstacles) {
+            obstacles.forEach(obs => {
+                const dist = Phaser.Math.Distance.Between(this.x, this.y, obs.x, obs.y);
+                if (dist < detectionRange) {
+                    // Check if obstacle is in front
+                    const angleToObs = Phaser.Math.Angle.Between(this.x, this.y, obs.x, obs.y);
+                    const diff = Phaser.Math.Angle.Wrap(angleToObs - this.rotation);
+                    if (Math.abs(diff) < 1.0) { // In front arc
+                        obstacleFound = true;
+                    }
+                }
+            });
+        }
+
+        if (obstacleFound) {
+            targetY -= 150; // Fly higher
+        }
+
+        // Smooth Altitude Adjustment
+        const currentY = this.y;
+        // Determine aspect based on direction
+        const isFacingRight = Math.abs(this.rotation) < Math.PI / 2;
+
+        if (currentY > targetY) {
+            // Climb
+            // If Right: -0.5 rad (Up-Right)
+            // If Left: -PI + 0.5 = -2.64 rad (Up-Left) ... wait, -PI is West. -PI + 0.5 is West-Down? 
+            // Angle grows clockwise. 0=Right, PI/2=Down, PI=Left, -PI/2=Up.
+            // Left is PI or -PI.
+            // To pitch UP from Left: target is -PI + 0.5? No.
+            // -PI is Left. -PI + 0.5 (approx -2.6) is South-West? No. 0 is East. PI is West.
+            // -PI/2 is North.
+            // From Right (0): -0.5 is North-East. Correct.
+            // From Left (PI): We want North-West. That is -PI + 0.5? No.
+            // West is +/- 3.14. North is -1.57.
+            // We want angle between -3.14 and -1.57.
+            // -3.14 + 0.5 = -2.64. Yes this is North-West.
+            // Correct logic:
+            const targetPitch = isFacingRight ? -0.5 : (-Math.PI + 0.5);
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetPitch, 0.05);
+
+        } else if (currentY < targetY - 10) {
+            // Descend
+            // Right: 0.2 (Down-Right)
+            // Left: PI - 0.2? (Down-Left)
+            // PI is West. PI - 0.2 = ~2.9. This is South-West. Correct.
+            const targetPitch = isFacingRight ? 0.2 : (Math.PI - 0.2);
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetPitch, 0.05);
+        } else {
+            // Level out
+            let targetRot = isFacingRight ? 0 : Math.PI;
+            // Ensure we rotate to the 'closest' PI for Left to avoid flipping over
+            if (!isFacingRight) {
+                // If current is negative (e.g. -3.1), target should be -PI
+                if (this.rotation < 0) targetRot = -Math.PI;
+            }
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetRot, 0.05);
+        }
+    }
+
+    startUTurn() {
+        if (this.isTurning) return;
+        this.isTurning = true;
+        this.turnPhase = 0;
+
+        const isFacingRight = Math.abs(this.rotation) < Math.PI / 2;
+        this.targetTurnRotation = isFacingRight ? -Math.PI : 0;
+
+        // Cancel existing tweens
+        this.scene.tweens.killTweensOf(this);
+
+        // Define Tween Chain (Phaser 3.60+ compatible)
+        this.scene.tweens.chain({
+            targets: this,
+            tweens: [
+                {
+                    // 1. Pitch Up to Vertical (-90)
+                    rotation: {
+                        getEnd: () => -Math.PI / 2
+                    },
+                    duration: 600,
+                    ease: 'Power2'
+                },
+                {
+                    // 2. Turn to Target
+                    rotation: {
+                        getEnd: () => this.targetTurnRotation
+                    },
+                    duration: 600,
+                    ease: 'Power2',
+                    onComplete: () => {
+                        this.isTurning = false;
+                        this.rotation = this.targetTurnRotation;
+                        // Update velocity immediately
+                        this.scene.physics.velocityFromRotation(this.rotation, this.currentSpeed, this.body.velocity);
+                    }
+                }
+            ]
+        });
+    }
+
+    performUTurn(delta) {
+        // Handled by Tweens now, we just enforce velocity update
         this.scene.physics.velocityFromRotation(this.rotation, this.currentSpeed, this.body.velocity);
     }
 

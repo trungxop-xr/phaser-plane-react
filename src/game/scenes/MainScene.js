@@ -14,6 +14,8 @@ import { MultiMissile } from '../entities/MultiMissile';
 import { Infantry } from '../entities/Infantry';
 import { FlakCannon } from '../entities/FlakCannon';
 import { FlakBullet } from '../entities/FlakBullet';
+import { T95Tank } from '../entities/T95Tank';
+import { Flame } from '../entities/Flame';
 import { EventBus } from '../../EventBus';
 import { leaderboardService } from '../../services/LeaderboardService';
 import { progressService } from '../../services/ProgressService';
@@ -59,6 +61,7 @@ export class MainScene extends Phaser.Scene {
         this.infantryDestroyed = 0;
         this.flaksDestroyed = 0;
         this.dronesDestroyed = 0;
+        this.t95Destroyed = 0;
         this.comboTracker = {};
         this.isPoweredUp = false;
         this.lastFired = 0;
@@ -87,6 +90,9 @@ export class MainScene extends Phaser.Scene {
 
         // Systems
         this.enemyIndicatorSystem = new EnemyIndicatorSystem(this);
+
+        this.groundFires = null; // Initialized in create
+        this.burnedEnemies = new Map(); // [enemy: {endTime, visualEffect}]
     }
 
     preload() {
@@ -165,6 +171,46 @@ export class MainScene extends Phaser.Scene {
             g.fillRect(25, 4, 16, 4); // Barrel
             g.fillStyle(cBlack, 1);
             g.fillRect(41, 4, 2, 4); // Muzzle tip
+        });
+
+        // T95 Tank Body (Red variant)
+        this.generateTexture(graphics, 't95TankBodyTexture', 0x000000, [], 60, 30, (g) => {
+            const cDarkRed = 0xB71C1C;
+            const cLightRed = 0xF44336;
+            const cTreads = 0x424242;
+
+            // Treads
+            g.fillStyle(cTreads, 1);
+            g.fillRect(2, 20, 56, 10);
+            g.fillStyle(0x757575, 1);
+            for (let i = 5; i < 55; i += 10) {
+                g.fillCircle(i + 4, 25, 3);
+            }
+
+            // Hull
+            g.fillStyle(cDarkRed, 1);
+            g.fillRect(5, 12, 50, 10);
+            g.fillStyle(cLightRed, 1);
+            g.fillRect(5, 12, 50, 3);
+        });
+
+        // T95 Tank Turret (Red variant)
+        this.generateTexture(graphics, 't95TankTurretTexture', 0x000000, [], 44, 14, (g) => {
+            const cDarkRed = 0xB71C1C;
+            const cLightRed = 0xF44336;
+            const cBlack = 0x000000;
+
+            // Turret Box
+            g.fillStyle(cDarkRed, 1);
+            g.fillRect(0, 2, 25, 10);
+            g.fillStyle(cLightRed, 1);
+            g.fillRect(2, 4, 21, 6);
+
+            // Gun Barrel
+            g.fillStyle(0x8E0000, 1);
+            g.fillRect(25, 4, 16, 4);
+            g.fillStyle(cBlack, 1);
+            g.fillRect(41, 4, 2, 4);
         });
 
         // Tower: Pixel Art (Concrete & Steel)
@@ -252,6 +298,18 @@ export class MainScene extends Phaser.Scene {
         // Particle
         this.generateTexture(graphics, 'particleTexture', 0xffa500, [], 4, 4, (g) => {
             g.fillCircle(2, 2, 2);
+        });
+
+        // Flame Particle: White circle for better tinting
+        this.generateTexture(graphics, 'flameParticleTexture', 0xffffff, [], 8, 8, (g) => {
+            g.fillStyle(0xffffff, 1);
+            g.fillCircle(4, 4, 4);
+        });
+
+        // Flame Blob Texture: Base sprite for the Flame entity
+        this.generateTexture(graphics, 'flameBlobTexture', 0xffffff, [], 10, 10, (g) => {
+            g.fillStyle(0xffffff, 1);
+            g.fillCircle(5, 5, 5);
         });
 
         // Cluster Missile
@@ -447,11 +505,17 @@ export class MainScene extends Phaser.Scene {
         this.droneBullets = this.physics.add.group();
         this.multiMissiles = this.physics.add.group({ classType: MultiMissile });
         this.infantry = this.physics.add.group({ classType: Infantry });
+        this.t95Tanks = this.physics.add.group({ classType: T95Tank });
         this.infantryBullets = this.physics.add.group();
         this.flakCannons = this.physics.add.group({ classType: FlakCannon });
         this.flakBullets = this.physics.add.group({
             classType: FlakBullet,
             allowGravity: false
+        });
+        this.flames = this.physics.add.group({ classType: Flame });
+        this.groundFires = this.physics.add.group({
+            allowGravity: false,
+            immovable: true
         });
 
         // Player
@@ -486,6 +550,7 @@ export class MainScene extends Phaser.Scene {
 
         // Initial Spawning
         if (levelData.targetTanks > 0) this.spawnInitialTanks(levelData.targetTanks + 2);
+        if (levelData.targetT95 > 0) this.spawnInitialT95Tanks(levelData.targetT95);
         if (levelData.targetTowers > 0) this.spawnInitialTowers(levelData.targetTowers + 1);
         if (levelData.targetHangars > 0) this.spawnInitialHangars(levelData.targetHangars + 1);
         if (levelData.targetFlaks > 0) this.spawnInitialFlaks(levelData.targetFlaks);
@@ -496,6 +561,8 @@ export class MainScene extends Phaser.Scene {
         this.key3 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE);
         this.key4 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR);
         this.key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
+        this.key0 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ZERO);
+        this.key5 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FIVE);
 
         // Radar & Crosshairs
         this.radarGraphics = this.add.graphics().setDepth(100);
@@ -511,6 +578,7 @@ export class MainScene extends Phaser.Scene {
         });
 
         // Trail Emitter
+        // Trail Emitter (Normal - Blue)
         this.trailEmitter = this.add.particles(0, 0, 'particleTexture' + this.textureSuffix, {
             lifespan: 400,
             scale: { start: 0.8, end: 0 },
@@ -520,12 +588,43 @@ export class MainScene extends Phaser.Scene {
             frequency: -1
         });
 
+        // Trail Emitter (Autopilot - Neon Green)
+        this.trailEmitterAutopilot = this.add.particles(0, 0, 'particleTexture' + this.textureSuffix, {
+            lifespan: 400,
+            scale: { start: 0.8, end: 0 },
+            alpha: { start: 0.5, end: 0 },
+            tint: 0x39FF14,
+            blendMode: 'ADD',
+            frequency: -1
+        });
+
+        // Flame Emitter (Disabled in favor of Flame Projectile System)
+        /*
+        this.flameEmitter = this.add.particles(0, 0, 'flameParticleTexture' + this.textureSuffix, {
+            ...
+        }).setDepth(15);
+        */
+
         // Start text
         this.isPaused = true;
         this.physics.pause();
         this.pauseText = this.add.text(width / 2, height / 2, 'READY?\n\n[ESC] START / RESUME\n[L] LEADERBOARD\n[H] HISTORY', {
             fontSize: '32px', fill: '#00FF00', backgroundColor: '#000000', align: 'center', fontStyle: 'bold', stroke: '#000', strokeThickness: 4
         }).setOrigin(0.5).setPadding(20).setDepth(100).setScrollFactor(0);
+
+        // Weapon Tutorial (if any)
+        this.tutorialGroup = this.add.container(0, 0).setDepth(101).setScrollFactor(0);
+        const tutorial = levelData.newWeaponTutorial;
+        if (tutorial) {
+            const title = this.add.text(width / 2, height / 2 + 150, `NEW WEAPON: ${tutorial.name}`, {
+                fontSize: '24px', fill: '#ffff00', fontStyle: 'bold', stroke: '#000', strokeThickness: 4
+            }).setOrigin(0.5);
+            const desc = this.add.text(width / 2, height / 2 + 190, tutorial.instruction, {
+                fontSize: '18px', fill: '#ffffff', align: 'center', backgroundColor: '#00000088'
+            }).setOrigin(0.5).setPadding(10);
+            this.tutorialGroup.add([title, desc]);
+        }
+        this.tutorialGroup.setVisible(this.isPaused);
 
         // Resume AudioContext
         this.input.on('pointerdown', () => {
@@ -560,8 +659,9 @@ export class MainScene extends Phaser.Scene {
             fontSize: '32px', fill: '#fff', backgroundColor: '#000'
         }).setOrigin(0.5).setVisible(false).setDepth(10).setScrollFactor(0);
 
-        // Internal HUD
-        // this.createHUD(); // Removed
+        // Autopilot Event Listeners (Updated for Dual Emitters)
+        // No longer needed to listen for 'update-autopilot' to change tint,
+        // because we handle it in update() loop.
     }
 
 
@@ -587,9 +687,31 @@ export class MainScene extends Phaser.Scene {
         this.terrain.strokePath();
     }
 
+    getEnemiesForAutopilot() {
+        const obstacles = [];
+        const groups = [this.tanks, this.watchtowers, this.hangars, this.flakCannons];
+        if (groups) {
+            groups.forEach(group => {
+                if (group) {
+                    group.children.each(child => {
+                        if (child.active) obstacles.push(child);
+                    });
+                }
+            });
+        }
+        return obstacles;
+    }
+
     update(time, delta) {
         if (this.isPaused || this.isGameOver) return;
-        this.player.update(this.cursors, delta);
+
+        // Pass key0 and key6 to player update
+        const extendedCursors = { ...this.cursors, key0: this.key0, key5: this.key5 };
+        this.player.update(extendedCursors, delta, this.getEnemiesForAutopilot());
+
+        this.updateFlamethrower(time, delta);
+
+
 
         const terrainHeight = this.getTerrainHeight(this.player.x);
         if (this.player.y > terrainHeight - 15) {
@@ -623,56 +745,74 @@ export class MainScene extends Phaser.Scene {
         const dischargeY = this.player.y + vec.y;
         if (this.player.currentSpeed > 10) {
             const count = Math.ceil(this.player.currentSpeed / 50);
-            this.trailEmitter.emitParticleAt(dischargeX, dischargeY, count);
+            const activeEmitter = this.player.isAutopilot ? this.trailEmitterAutopilot : this.trailEmitter;
+            if (activeEmitter) activeEmitter.emitParticleAt(dischargeX, dischargeY, count);
+
             if (this.player.currentSpeed > 350) {
                 this.player.x += Phaser.Math.Between(-1, 1);
                 this.player.y += Phaser.Math.Between(-1, 1);
             }
         }
 
+        const unlocked = this.levelStats?.unlockedWeapons || [];
+
         if (this.cursors.space.isDown) {
-            if (time > this.lastFired + WeaponConfig.machineGun.fireRate) {
-                if (this.ammo.machineGun !== 0) {
-                    this.fireMachineGun();
-                    this.lastFired = time;
-                    if (this.ammo.machineGun > 0) this.ammo.machineGun--;
+            if (!unlocked.includes('machineGun')) {
+                if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) this.showWeaponMessage('LOCKED');
+            } else {
+                if (time > this.lastFired + WeaponConfig.machineGun.fireRate) {
+                    if (this.ammo.machineGun !== 0) {
+                        this.fireMachineGun();
+                        this.lastFired = time;
+                        if (this.ammo.machineGun > 0) this.ammo.machineGun--;
+                    }
                 }
-            }
-            if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && (this.ammo.machineGun === 0)) {
-                this.showWeaponMessage('OUT OF AMMO');
+                if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && (this.ammo.machineGun === 0)) {
+                    this.showWeaponMessage('OUT OF AMMO');
+                }
             }
         }
 
         if (this.key2.isDown) {
-            if (time > this.lastSawbladeFired + WeaponConfig.sawblade.fireRate) {
-                if (this.ammo.sawblade !== 0) {
-                    this.fireSawblade(time);
-                    this.lastSawbladeFired = time;
-                    if (this.ammo.sawblade > 0) this.ammo.sawblade--;
+            if (!unlocked.includes('sawblade')) {
+                if (Phaser.Input.Keyboard.JustDown(this.key2)) this.showWeaponMessage('LOCKED');
+            } else {
+                if (time > this.lastSawbladeFired + WeaponConfig.sawblade.fireRate) {
+                    if (this.ammo.sawblade !== 0) {
+                        this.fireSawblade(time);
+                        this.lastSawbladeFired = time;
+                        if (this.ammo.sawblade > 0) this.ammo.sawblade--;
+                    }
                 }
-            }
-            if (Phaser.Input.Keyboard.JustDown(this.key2)) {
-                if (this.ammo.sawblade === 0) this.showWeaponMessage('OUT OF AMMO');
-                else if (time < this.lastSawbladeFired + WeaponConfig.sawblade.fireRate) this.showWeaponMessage('RECHARGING');
+                if (Phaser.Input.Keyboard.JustDown(this.key2)) {
+                    if (this.ammo.sawblade === 0) this.showWeaponMessage('OUT OF AMMO');
+                    else if (time < this.lastSawbladeFired + WeaponConfig.sawblade.fireRate) this.showWeaponMessage('RECHARGING');
+                }
             }
         }
 
         if (this.key3.isDown) {
-            if (time > this.lastClusterFired + WeaponConfig.clusterMissile.fireRate) {
-                if (this.ammo.clusterMissile !== 0) {
-                    this.fireClusterMissile(time);
-                    this.lastClusterFired = time;
-                    if (this.ammo.clusterMissile > 0) this.ammo.clusterMissile--;
+            if (!unlocked.includes('clusterMissile')) {
+                if (Phaser.Input.Keyboard.JustDown(this.key3)) this.showWeaponMessage('LOCKED');
+            } else {
+                if (time > this.lastClusterFired + WeaponConfig.clusterMissile.fireRate) {
+                    if (this.ammo.clusterMissile !== 0) {
+                        this.fireClusterMissile(time);
+                        this.lastClusterFired = time;
+                        if (this.ammo.clusterMissile > 0) this.ammo.clusterMissile--;
+                    }
                 }
-            }
-            if (Phaser.Input.Keyboard.JustDown(this.key3)) {
-                if (this.ammo.clusterMissile === 0) this.showWeaponMessage('OUT OF AMMO');
-                else if (time < this.lastClusterFired + WeaponConfig.clusterMissile.fireRate) this.showWeaponMessage('RECHARGING');
+                if (Phaser.Input.Keyboard.JustDown(this.key3)) {
+                    if (this.ammo.clusterMissile === 0) this.showWeaponMessage('OUT OF AMMO');
+                    else if (time < this.lastClusterFired + WeaponConfig.clusterMissile.fireRate) this.showWeaponMessage('RECHARGING');
+                }
             }
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.key1)) {
-            if (this.ammo.bomb !== 0) {
+            if (!unlocked.includes('bomb')) {
+                this.showWeaponMessage('LOCKED');
+            } else if (this.ammo.bomb !== 0) {
                 this.isBombing = !this.isBombing;
                 console.log('Bomb Bay:', this.isBombing ? 'ARMED' : 'SAFE');
             } else {
@@ -690,14 +830,18 @@ export class MainScene extends Phaser.Scene {
         }
 
         if (this.key4.isDown) {
-            if (time > this.lastMultiMissileFired + WeaponConfig.multiMissile.cooldown) {
-                if (this.ammo.multiMissile !== 0) {
-                    this.isLocking = true;
+            if (!unlocked.includes('multiMissile')) {
+                if (Phaser.Input.Keyboard.JustDown(this.key4)) this.showWeaponMessage('LOCKED');
+            } else {
+                if (time > this.lastMultiMissileFired + WeaponConfig.multiMissile.cooldown) {
+                    if (this.ammo.multiMissile !== 0) {
+                        this.isLocking = true;
+                    }
                 }
-            }
-            if (Phaser.Input.Keyboard.JustDown(this.key4)) {
-                if (this.ammo.multiMissile === 0) this.showWeaponMessage('OUT OF AMMO');
-                else if (time < this.lastMultiMissileFired + WeaponConfig.multiMissile.cooldown) this.showWeaponMessage('RECHARGING');
+                if (Phaser.Input.Keyboard.JustDown(this.key4)) {
+                    if (this.ammo.multiMissile === 0) this.showWeaponMessage('OUT OF AMMO');
+                    else if (time < this.lastMultiMissileFired + WeaponConfig.multiMissile.cooldown) this.showWeaponMessage('RECHARGING');
+                }
             }
 
             if (this.isLocking) {
@@ -709,7 +853,7 @@ export class MainScene extends Phaser.Scene {
 
                 const range = 200;
                 const potentialTargets = [];
-                const enemyGroups = [this.tanks, this.watchtowers, this.drones, this.hangars];
+                const enemyGroups = [this.tanks, this.t95Tanks, this.watchtowers, this.drones, this.hangars];
                 enemyGroups.forEach(group => {
                     group.children.each(e => {
                         if (e.active && Phaser.Math.Distance.Between(this.player.x, this.player.y, e.x, e.y) <= range) {
@@ -822,6 +966,7 @@ export class MainScene extends Phaser.Scene {
         else if (type === 'drone') { scoreBase = EnemyConfig.drone.score; coinBase = EnemyConfig.drone.coinPerKill; }
         else if (type === 'infantry') { scoreBase = this.enemyStats.infantry.score; coinBase = this.enemyStats.infantry.coinPerKill; }
         else if (type === 'flak') { scoreBase = this.enemyStats.flakCannon.score; coinBase = this.enemyStats.flakCannon.coinPerKill; }
+        else if (type === 't95') { scoreBase = ScoreConfig.base.t95; coinBase = EnemyConfig.t95.coinPerKill; }
 
         let earned = scoreBase;
         if (entity.firstDamageTime && (this.time.now - entity.firstDamageTime) <= ScoreConfig.quickKill.window) {
@@ -861,6 +1006,7 @@ export class MainScene extends Phaser.Scene {
             if (!this.dronesDestroyed) this.dronesDestroyed = 0;
             this.dronesDestroyed++;
         }
+        else if (type === 't95') this.t95Destroyed++;
 
         this.broadcastObjectives();
         this.checkLevelWin();
@@ -917,8 +1063,8 @@ export class MainScene extends Phaser.Scene {
         }, null, this);
 
         // Player weapons vs Enemies
-        const weapons = [this.bombs, this.mgBullets, this.clusterMissiles, this.sawblades, this.multiMissiles];
-        const terrainEnemies = [this.tanks, this.watchtowers, this.infantry, this.flakCannons];
+        const weapons = [this.bombs, this.mgBullets, this.clusterMissiles, this.sawblades, this.multiMissiles, this.flames];
+        const terrainEnemies = [this.tanks, this.t95Tanks, this.watchtowers, this.infantry, this.flakCannons];
         const flyerEnemies = [this.drones, this.hangars];
         const allEnemies = [...terrainEnemies, ...flyerEnemies];
 
@@ -947,6 +1093,9 @@ export class MainScene extends Phaser.Scene {
                     } else if (weaponGroup === this.sawblades) {
                         damage = WeaponConfig.sawblade.damagePerSecond * (this.game.loop.delta / 1000);
                         damageType = 'SAWBLADE';
+                    } else if (weaponGroup === this.flames) {
+                        damage = WeaponConfig.flamethrower.damagePerSecond * (this.game.loop.delta / 1000);
+                        damageType = 'FLAME';
                     }
 
                     // Apply Damage
@@ -975,6 +1124,9 @@ export class MainScene extends Phaser.Scene {
                             const spark = this.add.circle(enemy.x, enemy.y, 3, 0xffaa00);
                             this.tweens.add({ targets: spark, x: enemy.x + Phaser.Math.Between(-10, 10), y: enemy.y - 10, alpha: 0, duration: 300, onComplete: () => spark.destroy() });
                         }
+                    } else if (damageType === 'FLAME') {
+                        // Apply burn effect (Scene-level tracking)
+                        this.applyBurnStatus(enemy, WeaponConfig.flamethrower.burnDuration);
                     }
 
                 });
@@ -1017,6 +1169,19 @@ export class MainScene extends Phaser.Scene {
             const tank = new Tank(this, x, y, 'tankTexture' + this.textureSuffix, 100, 150 * levelMult, this.getTerrainHeight.bind(this));
             this.tanks.add(tank);
             if (Math.random() < 0.4) this.spawnInfantrySquad(x + Phaser.Math.Between(-100, 100));
+        }
+    }
+
+    spawnT95Tank() {
+        if (this.isPaused || this.isGameOver) return;
+        const x = Phaser.Math.Between(100, this.worldWidth - 100);
+        if (this.isSpaceEmpty(x, 90)) {
+            const config = this.enemyStats.t95;
+            const levelMult = LevelConfig[this.currentLevel].enemySpeedMultiplier;
+            const y = this.getTerrainHeight(x) - config.groundOffset;
+            const tank = new T95Tank(this, x, y, 't95TankTexture' + this.textureSuffix, config.hp, config.speed * levelMult, this.getTerrainHeight.bind(this));
+            this.t95Tanks.add(tank);
+            if (Math.random() < 0.6) this.spawnInfantrySquad(x + Phaser.Math.Between(-120, 120));
         }
     }
 
@@ -1132,6 +1297,23 @@ export class MainScene extends Phaser.Scene {
         }
     }
 
+    spawnInitialT95Tanks(count) {
+        let spawned = 0;
+        let attempts = 0;
+        const config = this.enemyStats.t95;
+        const levelMult = LevelConfig[this.currentLevel].enemySpeedMultiplier;
+        while (spawned < count && attempts < 50) {
+            const x = Phaser.Math.Between(100, this.worldWidth - 100);
+            if (this.isSpaceEmpty(x, 100)) {
+                const y = this.getTerrainHeight(x) - config.groundOffset;
+                const tank = new T95Tank(this, x, y, 't95TankTexture' + this.textureSuffix, config.hp, config.speed * levelMult, this.getTerrainHeight.bind(this));
+                this.t95Tanks.add(tank);
+                spawned++;
+            }
+            attempts++;
+        }
+    }
+
     isSpaceEmpty(x, minDistance) {
         const groups = [this.tanks, this.watchtowers, this.hangars, this.flakCannons];
         for (const group of groups) {
@@ -1140,6 +1322,17 @@ export class MainScene extends Phaser.Scene {
             if (conflict) return false;
         }
         return true;
+    }
+
+    getEnemiesForAutopilot() {
+        // Collect all potential obstacles for Autopilot raycasting
+        const obstacles = [];
+        [this.tanks, this.t95Tanks, this.watchtowers, this.hangars, this.flakCannons].forEach(group => {
+            group.children.each(child => {
+                if (child.active) obstacles.push(child);
+            });
+        });
+        return obstacles;
     }
 
     dropBomb() {
@@ -1250,11 +1443,14 @@ export class MainScene extends Phaser.Scene {
     }
 
     getEntityType(entity) {
-        if (entity instanceof Tank) return 'tank';
+        if (entity instanceof Tank) {
+            if (entity instanceof T95Tank) return 't95';
+            return 'tank';
+        }
         if (entity instanceof Tower) return 'tower';
-        if (entity instanceof Infantry) return 'infantry';
         if (entity instanceof Drone) return 'drone';
         if (entity instanceof DroneHangar) return 'hangar';
+        if (entity instanceof Infantry) return 'infantry';
         if (entity instanceof FlakCannon) return 'flak';
         return 'unknown';
     }
@@ -1319,21 +1515,47 @@ export class MainScene extends Phaser.Scene {
 
     broadcastObjectives() {
         const levelData = LevelConfig[this.currentLevel];
-        const line1 = `Tanks: ${this.tanksDestroyed}/${levelData.targetTanks} | Infantry: ${this.infantryDestroyed}/${levelData.targetInfantry || 0}`;
-        const line2 = `Flak: ${this.flaksDestroyed || 0}/${levelData.targetFlaks || 0} | Hangars: ${this.hangarsDestroyed}/${levelData.targetHangars || 0}${levelData.targetDrones ? ' | Drones: ' + (this.dronesDestroyed || 0) + '/' + levelData.targetDrones : ''}`;
-        this.events.emit('update-objectives', { line1, line2 });
+        if (!levelData) return;
+
+        const objectives = [];
+
+        // Map config keys to scene properties
+        const mapping = {
+            targetTanks: { label: 'Tanks', current: this.tanksDestroyed },
+            targetT95: { label: 'T95', current: this.t95Destroyed },
+            targetTowers: { label: 'Towers', current: this.towersDestroyed },
+            targetInfantry: { label: 'Infantry', current: this.infantryDestroyed },
+            targetHangars: { label: 'Hangars', current: this.hangarsDestroyed },
+            targetFlaks: { label: 'Flak', current: this.flaksDestroyed || 0 },
+            targetDrones: { label: 'Drones', current: this.dronesDestroyed || 0 }
+        };
+
+        // Filter for targets > 0
+        Object.keys(levelData).forEach(key => {
+            if (key.startsWith('target') && levelData[key] > 0 && mapping[key]) {
+                objectives.push({
+                    label: mapping[key].label,
+                    current: mapping[key].current,
+                    target: levelData[key]
+                });
+            }
+        });
+
+        this.events.emit('update-objectives', objectives);
     }
 
     checkLevelWin() {
         const levelData = LevelConfig[this.currentLevel];
-        const tanksOk = this.tanksDestroyed >= levelData.targetTanks;
-        const towersOk = this.towersDestroyed >= levelData.targetTowers;
+        const tanksOk = this.tanksDestroyed >= (levelData.targetTanks || 0);
+        const t95Ok = this.t95Destroyed >= (levelData.targetT95 || 0);
+        const towersOk = this.towersDestroyed >= (levelData.targetTowers || 0);
         const hangarsOk = this.hangarsDestroyed >= (levelData.targetHangars || 0);
         const flaksOk = (this.flaksDestroyed || 0) >= (levelData.targetFlaks || 0);
         const infantryOk = (this.infantryDestroyed || 0) >= (levelData.targetInfantry || 0);
+        const dronesOk = (this.dronesDestroyed || 0) >= (levelData.targetDrones || 0);
 
-        if (tanksOk && towersOk && hangarsOk && flaksOk && infantryOk) {
-            if (this.currentLevel < 10) this.doLevelComplete();
+        if (tanksOk && t95Ok && towersOk && hangarsOk && flaksOk && infantryOk && dronesOk) {
+            if (this.currentLevel < 20) this.doLevelComplete();
             else this.doFinalVictory();
         }
     }
@@ -1418,9 +1640,11 @@ export class MainScene extends Phaser.Scene {
         if (this.isPaused) {
             this.physics.pause();
             this.pauseText.setText('PAUSED\n\n[ESC] RESUME\n[L] LEADERBOARD\n[H] HISTORY').setVisible(true);
+            if (this.tutorialGroup) this.tutorialGroup.setVisible(true);
         } else {
             this.physics.resume();
             this.pauseText.setVisible(false);
+            if (this.tutorialGroup) this.tutorialGroup.setVisible(false);
         }
     }
 
@@ -1459,7 +1683,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     applySplashDamage(x, y, radius, damage, sourceId, exclude) {
-        const enemyGroups = [this.tanks, this.watchtowers, this.infantry, this.drones, this.hangars, this.flakCannons];
+        const enemyGroups = [this.tanks, this.t95Tanks, this.watchtowers, this.infantry, this.drones, this.hangars, this.flakCannons];
         enemyGroups.forEach(group => {
             if (!group) return;
             group.children.each(entity => {
@@ -1622,18 +1846,144 @@ export class MainScene extends Phaser.Scene {
         } catch (e) { }
     }
 
+    updateFlamethrower(time, delta) {
+        if (!this.player || !this.player.active) return;
+
+        // 1. Particle Emission (Legacy) - Still used for some background effect or replaced by Flame objects?
+        // Let's replace the main emission with Flame objects for "cluster bomb" feel.
+        if (this.player.isFiringFlamethrower) {
+            // Firing frequency: throttle spawn to avoid too many objects
+            if (!this.lastFlameSpawned || time > this.lastFlameSpawned + 40) { // ~25 flames per second
+                this.fireFlame();
+                this.lastFlameSpawned = time;
+            }
+
+            // 2. Collision & Ground Fire (Legacy Raycast Removed)
+            // Ground fires are now created by Flame projectiles in Flame.js
+        }
+
+        // 3. Process Ground Fires (Overlap check: Direct Damage + Status)
+        this.groundFires.children.each(fire => {
+            if (!fire.active) return;
+            const enemyGroups = [this.tanks, this.t95Tanks, this.infantry];
+            enemyGroups.forEach(group => {
+                group.children.each(e => {
+                    if (e.active && Phaser.Math.Distance.Between(fire.x, fire.y, e.x, e.y) < 35) {
+                        // Apply immediate DOT damage from ground fire
+                        this.handleDamage(e, WeaponConfig.flamethrower.damagePerSecond * 0.5 * (delta / 1000), this.player.playerId, 'FLAME_GROUND');
+                        // Refresh/Apply burn status
+                        this.applyBurnStatus(e, WeaponConfig.flamethrower.burnDuration);
+                    }
+                });
+            });
+        });
+
+        // 4. Process Burned Enemies (DOT)
+        this.burnedEnemies.forEach((data, enemy) => {
+            if (!enemy.active || time > data.endTime) {
+                if (data.effect) data.effect.stop();
+                this.burnedEnemies.delete(enemy);
+            } else {
+                // Apply DOT
+                this.handleDamage(enemy, WeaponConfig.flamethrower.damagePerSecond * (delta / 1000), this.player.playerId, 'BURN');
+                // visual effect follows
+                if (data.effect) {
+                    data.effect.setPosition(enemy.x, enemy.y);
+                }
+            }
+        });
+    }
+
+    fireFlame() {
+        const config = WeaponConfig.flamethrower;
+
+        // Spawn from belly (slightly behind the center and downwards)
+        const angle = this.player.rotation;
+        const forwardOffset = 10; // Behind the nose
+        const sideOffset = 10;    // "Downwards" relative to plane
+
+        const x = this.player.x + Math.cos(angle) * forwardOffset - Math.sin(angle) * sideOffset;
+        const y = this.player.y + Math.sin(angle) * forwardOffset + Math.cos(angle) * sideOffset;
+
+        // Slight randomness in angle for "spray" look
+        const sprayAngle = this.player.rotation + Phaser.Math.FloatBetween(-0.15, 0.15);
+        const speed = 500 + this.player.currentSpeed;
+
+        const flame = new Flame(
+            this,
+            x, y,
+            'flameBlobTexture' + this.textureSuffix,
+            sprayAngle,
+            speed,
+            config.range,
+            config.damagePerSecond
+        );
+        this.flames.add(flame);
+    }
+
+    createGroundFire(x, y) {
+        const fire = this.groundFires.create(x, y, 'particleTexture');
+        fire.setAlpha(0); // Invisible physics body
+        fire.setScale(2.5); // Slightly larger hitbox
+
+        const config = WeaponConfig.flamethrower;
+
+        // Visuals: Dense sticky fire using the new flame particle texture
+        const emitter = this.add.particles(x, y, 'flameParticleTexture' + this.textureSuffix, {
+            lifespan: { min: 400, max: 800 },
+            scale: { start: 1, end: 0 },
+            speed: { min: 10, max: 40 },
+            angle: { min: 240, max: 300 },
+            gravityY: -50,
+            tint: [0xffff00, 0xffa500, 0xff0000],
+            blendMode: 'ADD',
+            frequency: 40, // Constant flow
+            maxParticles: 100
+        });
+        emitter.setDepth(14);
+
+        // Timer for the 3s duration (config.groundFireDuration = 3000)
+        this.time.delayedCall(config.groundFireDuration, () => {
+            if (emitter) emitter.stop();
+            this.time.delayedCall(500, () => {
+                if (emitter) emitter.destroy();
+                if (fire && fire.active) fire.destroy();
+            });
+        });
+    }
+
+    applyBurnStatus(enemy, duration) {
+        let data = this.burnedEnemies.get(enemy);
+        if (!data) {
+            const emitter = this.add.particles(enemy.x, enemy.y, 'particleTexture', {
+                lifespan: 300,
+                scale: { start: 0.8, end: 0 },
+                speed: 40,
+                tint: 0xffd700,
+                blendMode: 'ADD',
+                frequency: 50
+            });
+            data = { effect: emitter };
+            this.burnedEnemies.set(enemy, data);
+        }
+        data.endTime = this.time.now + duration;
+    }
+
     tankShoot() {
         if (this.isPaused || this.isGameOver) return;
         const towers = this.watchtowers.getChildren();
         towers.forEach(tower => {
             if (tower.active && this.time.now > tower.nextShot) this.towerFire(tower, this.time.now);
         });
-        const tanks = this.tanks.getChildren();
+        const tanks = [...this.tanks.getChildren(), ...this.t95Tanks.getChildren()];
         tanks.forEach(tank => {
             if (tank.active) {
+                const isT95 = tank instanceof T95Tank;
+                const config = this.enemyStats[isT95 ? 't95' : 'tank'];
+                const weaponConfig = WeaponConfig[isT95 ? 't95Bullet' : 'tankBullet'];
                 const dist = Phaser.Math.Distance.Between(tank.x, tank.y, this.player.x, this.player.y);
-                if (dist <= WeaponConfig.tankBullet.range) {
-                    tank.shoot(WeaponConfig.tankBullet.speed);
+                if (dist <= config.range) {
+                    tank.shoot(weaponConfig.speed);
                 }
             }
         });
@@ -1642,7 +1992,5 @@ export class MainScene extends Phaser.Scene {
             if (inf.active) inf.update(this.time.now, this.game.loop.delta);
         });
     }
-
-
 }
 

@@ -39,6 +39,17 @@ export const EnemyConfig = {
         muzzleDist: 45,
         flashRadius: 15
     },
+    t95: {
+        hp: 300,
+        range: 400,
+        speed: 100,
+        scale: 1.8,
+        groundOffset: 15,
+        coinPerKill: 2500,
+        muzzleDist: 55,
+        flashRadius: 20,
+        score: 500
+    },
     tower: {
         hp: 150,
         range: 300,

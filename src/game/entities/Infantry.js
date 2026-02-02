@@ -91,6 +91,15 @@ export class Infantry extends Phaser.Physics.Arcade.Sprite {
         this.body.velocity.y = 0;
         this.body.updateFromGameObject();
 
+        // Boundary Check (X-axis)
+        if (this.x < 50) {
+            this.x = 50;
+            if (this.body.velocity.x < 0) this.body.setVelocityX(-this.body.velocity.x); // Bounce
+        } else if (this.x > this.scene.worldWidth - 50) {
+            this.x = this.scene.worldWidth - 50;
+            if (this.body.velocity.x > 0) this.body.setVelocityX(-this.body.velocity.x); // Bounce
+        }
+
         if (this.y > this.scene.worldHeight + 100) {
             this.destroy();
         }
