@@ -1115,7 +1115,7 @@ export class MainScene extends Phaser.Scene {
                         weapon.destroy();
                     } else if (damageType === 'SAWBLADE') {
                         // Sawblade logic (bounce, spark)
-                        if (enemy.constructor.name === 'Tank' || enemy.constructor.name === 'Tower' || enemy.constructor.name === 'FlakCannon' || enemy.constructor.name === 'DroneHangar') {
+                        if (enemy instanceof Tank || enemy instanceof Tower || enemy instanceof FlakCannon || enemy instanceof DroneHangar) {
                             const dx = enemy.x - weapon.x;
                             if ((dx > 0 && weapon.body.velocity.x > 0) || (dx < 0 && weapon.body.velocity.x < 0)) {
                                 weapon.bounce();

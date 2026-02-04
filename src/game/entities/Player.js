@@ -108,13 +108,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     updateManual(cursors, delta) {
         // Rotation
-        if (cursors.left.isDown) {
-            this.setAngularVelocity(-PlayerConfig.rotationSpeed);
-        } else if (cursors.right.isDown) {
-            this.setAngularVelocity(PlayerConfig.rotationSpeed);
-        } else {
-            this.setAngularVelocity(0);
-        }
+        // Rotation - Follow Mouse
+        const activePointer = this.scene.input.activePointer;
+        const targetAngle = Phaser.Math.Angle.Between(this.x, this.y, activePointer.worldX, activePointer.worldY);
+
+        // Smoothly rotate towards target
+        this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetAngle, 0.05);
+        this.setAngularVelocity(0);
 
         // Speed Control
         if (cursors.up.isDown) {
