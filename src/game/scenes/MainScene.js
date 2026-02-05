@@ -20,6 +20,7 @@ import { EventBus } from '../../EventBus';
 import { leaderboardService } from '../../services/LeaderboardService';
 import { progressService } from '../../services/ProgressService';
 import { HUD } from '../entities/HUD';
+import { ItemManager } from '../managers/ItemManager';
 import { EnemyIndicatorSystem } from '../systems/EnemyIndicatorSystem';
 
 // Audio context managed globally
@@ -530,6 +531,23 @@ export class MainScene extends Phaser.Scene {
         // Initialize HUD
         this.hud = new HUD(this);
 
+        // Initialize HUD
+        this.hud = new HUD(this);
+
+        // Ammo
+        this.ammo = {
+            machineGun: WeaponConfig.machineGun.ammo,
+            bomb: WeaponConfig.bomb.ammo,
+            sawblade: WeaponConfig.sawblade.ammo,
+            clusterMissile: WeaponConfig.clusterMissile.ammo,
+            multiMissile: WeaponConfig.multiMissile.ammo,
+            homingMissile: WeaponConfig.homingMissile.ammo,
+            flamethrower: 100 // Fuel
+        };
+
+        // Item Manager
+        this.itemManager = new ItemManager(this);
+
         // Delay initial HUD updates to prevent "drawImage of null" crash on startup
         this.time.delayedCall(100, () => {
             if (this.hud && this.hud.active) {
@@ -706,6 +724,8 @@ export class MainScene extends Phaser.Scene {
     update(time, delta) {
         if (this.isPaused || this.isGameOver) return;
 
+        this.itemManager.update();
+
         // Pass key0 and key6 to player update
         const extendedCursors = { ...this.cursors, key0: this.key0, key5: this.key5 };
         this.player.update(extendedCursors, delta, this.getEnemiesForAutopilot());
@@ -756,10 +776,14 @@ export class MainScene extends Phaser.Scene {
         }
 
         const unlocked = this.levelStats?.unlockedWeapons || [];
+        const isFiring = this.input.activePointer.isDown;
+        const justFired = isFiring && !this._wasFiring;
+        this._wasFiring = isFiring;
 
-        if (this.cursors.space.isDown) {
+        // Machine Gun (Mouse Left Click)
+        if (isFiring) {
             if (!unlocked.includes('machineGun')) {
-                if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) this.showWeaponMessage('LOCKED');
+                if (justFired) this.showWeaponMessage('LOCKED');
             } else {
                 if (time > this.lastFired + WeaponConfig.machineGun.fireRate) {
                     if (this.ammo.machineGun !== 0) {
@@ -768,7 +792,7 @@ export class MainScene extends Phaser.Scene {
                         if (this.ammo.machineGun > 0) this.ammo.machineGun--;
                     }
                 }
-                if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && (this.ammo.machineGun === 0)) {
+                if (justFired && (this.ammo.machineGun === 0)) {
                     this.showWeaponMessage('OUT OF AMMO');
                 }
             }
@@ -909,7 +933,15 @@ export class MainScene extends Phaser.Scene {
                 b.destroy();
             }
         });
-        this.mgBullets.children.each(b => { if (b.x > this.worldWidth + 100 || b.x < -100 || b.y > this.worldHeight + 100 || b.y < -100) b.destroy(); });
+        this.mgBullets.children.each(b => {
+            if (b.x > this.worldWidth + 100 || b.x < -100 || b.y > this.worldHeight + 100 || b.y < -100) {
+                b.destroy();
+            } else if (b.y >= this.getTerrainHeight(b.x)) {
+                // Determine if we want a small impact effect
+                // this.createGroundImpact(b.x, b.y); // Optional
+                b.destroy();
+            }
+        });
         this.droneBullets.children.each(b => { if (b.x > this.worldWidth + 100 || b.x < -100 || b.y < -100 || b.y > this.worldHeight + 100) b.destroy(); });
         this.bombs.children.each(b => { if (b.y >= this.getTerrainHeight(b.x)) this.explodeBomb(b); });
         this.multiMissiles.children.each(m => {
@@ -1092,8 +1124,23 @@ export class MainScene extends Phaser.Scene {
                         damage = WeaponConfig.clusterMissile.damage;
                         damageType = 'CLUSTER';
                     } else if (weaponGroup === this.sawblades) {
-                        damage = WeaponConfig.sawblade.damagePerSecond * (this.game.loop.delta / 1000);
                         damageType = 'SAWBLADE';
+                        const isHardTarget = enemy instanceof Tank || enemy instanceof Tower || enemy instanceof FlakCannon || enemy instanceof DroneHangar || enemy instanceof T95Tank;
+
+                        if (isHardTarget) {
+                            // Hard targets: Deal fixed damage on impact (bounce), no continuous DPS
+                            const dx = enemy.x - weapon.x;
+                            const movingTowards = (dx > 0 && weapon.body.velocity.x > 0) || (dx < 0 && weapon.body.velocity.x < 0);
+
+                            if (movingTowards) {
+                                damage = WeaponConfig.sawblade.damagePerSecond * 0.5; // Use 50% raw DPS value as "Base Damage" for impact
+                            } else {
+                                damage = 0; // Prevent multi-hit/scraping while moving away
+                            }
+                        } else {
+                            // Soft targets: Continuous cutting
+                            damage = WeaponConfig.sawblade.damagePerSecond * (this.game.loop.delta / 1000);
+                        }
                     } else if (weaponGroup === this.flames) {
                         damage = WeaponConfig.flamethrower.damagePerSecond * (this.game.loop.delta / 1000);
                         damageType = 'FLAME';
@@ -1115,7 +1162,9 @@ export class MainScene extends Phaser.Scene {
                         weapon.destroy();
                     } else if (damageType === 'SAWBLADE') {
                         // Sawblade logic (bounce, spark)
-                        if (enemy instanceof Tank || enemy instanceof Tower || enemy instanceof FlakCannon || enemy instanceof DroneHangar) {
+                        const isHardTarget = enemy instanceof Tank || enemy instanceof Tower || enemy instanceof FlakCannon || enemy instanceof DroneHangar || enemy instanceof T95Tank;
+
+                        if (isHardTarget) {
                             const dx = enemy.x - weapon.x;
                             if ((dx > 0 && weapon.body.velocity.x > 0) || (dx < 0 && weapon.body.velocity.x < 0)) {
                                 weapon.bounce();
@@ -1421,13 +1470,20 @@ export class MainScene extends Phaser.Scene {
 
     fireMachineGun() {
         if (this.isPaused || this.isGameOver || !this.player.active) return;
-        const vec = new Phaser.Math.Vector2(20, 0).rotate(this.player.rotation);
+
+        // Use player's gun rotation (auto-targeting angle)
+        const effectiveRotation = this.player.rotation + (this.player.gunRotation || 0);
+
+        const vec = new Phaser.Math.Vector2(20, 0).rotate(effectiveRotation);
         const dischargeX = this.player.x + vec.x;
         const dischargeY = this.player.y + vec.y;
+
         const bullet = this.mgBullets.create(dischargeX, dischargeY, 'mgBulletTexture' + this.textureSuffix);
         bullet.body.allowGravity = false;
-        this.physics.velocityFromRotation(this.player.rotation, WeaponConfig.machineGun.speed, bullet.body.velocity);
-        bullet.rotation = this.player.rotation + Math.PI / 2;
+
+        this.physics.velocityFromRotation(effectiveRotation, WeaponConfig.machineGun.speed, bullet.body.velocity);
+        bullet.rotation = effectiveRotation + Math.PI / 2;
+
         const flash = this.add.circle(dischargeX, dischargeY, 8, 0xffffdd);
         this.time.delayedCall(50, () => flash.destroy());
     }
@@ -1648,17 +1704,23 @@ export class MainScene extends Phaser.Scene {
         this.isGameOver = true;
         this.victoryText.setText('LEVEL ' + this.currentLevel + ' COMPLETE!').setVisible(true);
 
-        // Save progress
-        // Save progress
-        if (this.playerId) {
-            progressService.saveLevelProgress(this.playerId, {
-                levelNumber: this.currentLevel,
-                highScore: this.score,
-                totalCoins: this.totalCoins
-            });
+        if (this.currentLevel < 5) { // Assuming 5 is max
+            // Save Progress
+            if (this.playerId) {
+                progressService.saveLevelProgress(this.playerId, {
+                    levelNumber: this.currentLevel,
+                    highScore: this.score,
+                    totalCoins: this.totalCoins
+                });
+            }
 
             // Submit to Leaderboard
             leaderboardService.submitScore(this.playerId, this.playerName, this.score);
+        }
+
+        // Cleanup Power-ups
+        if (this.itemManager) {
+            this.itemManager.cleanUp();
         }
 
         this.time.delayedCall(1500, () => {
@@ -1701,6 +1763,9 @@ export class MainScene extends Phaser.Scene {
     }
 
     restartGame() {
+        if (this.itemManager) {
+            this.itemManager.cleanUp();
+        }
         this.physics.world.timeScale = 1;
         this.scene.restart({
             level: this.currentLevel,
@@ -1840,14 +1905,7 @@ export class MainScene extends Phaser.Scene {
 
     spawnPowerup() {
         if (this.isPaused || this.isGameOver) return;
-        const x = Phaser.Math.Between(50, this.worldWidth - 50);
-        const y = Phaser.Math.Between(50, (this.scale.height * 2) / 3);
-        const star = this.powerups.create(x, y, 'starTexture' + this.textureSuffix);
-        star.body.allowGravity = false;
-        this.tweens.add({ targets: star, angle: 360, duration: 3000, repeat: -1, ease: 'Linear' });
-        this.tweens.add({ targets: star, scaleX: 1.3, scaleY: 1.3, duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-        this.time.delayedCall(7000, () => { if (star.active) this.tweens.add({ targets: star, alpha: 0, duration: 100, yoyo: true, repeat: -1 }); });
-        this.time.delayedCall(10000, () => { if (star.active) star.destroy(); });
+        this.itemManager.spawnItem();
     }
 
     collectPowerup(player, star) {

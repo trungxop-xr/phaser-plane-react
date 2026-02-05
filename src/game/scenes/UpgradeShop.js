@@ -185,8 +185,8 @@ export class UpgradeShop extends Phaser.Scene {
         this.selectedWeaponKey = weaponKey;
         this.currentState = this.STATE.SERVICE;
         this.mainContainer.setVisible(false);
+        this.confirmContainer.setVisible(false);
         this.serviceContainer.removeAll(true);
-        this.serviceContainer.setVisible(true);
 
         const { width, height } = this.scale;
         const weapon = this.weapons.find(w => w.key === weaponKey);
@@ -206,15 +206,30 @@ export class UpgradeShop extends Phaser.Scene {
         const activeServices = weaponKey === 'machineGun' ? services.slice(0, 2) : services;
 
         activeServices.forEach((s, i) => {
-            const isAffordable = this.totalCoins >= s.cost;
-            const color = isAffordable ? '#FFFFFF' : '#884444';
-            const costColor = isAffordable ? '#00FF00' : '#FF4444';
+            const cfg = WeaponConfig[weaponKey];
+            const currentLevel = (s.type === 'dmg' ? cfg.dmgLevel :
+                (s.type === 'cd' ? cfg.cdLevel :
+                    (s.type === 'ammo' ? cfg.ammoLevel : 0))) || 0;
+            const isMaxed = currentLevel >= 3;
 
-            const txt = this.add.text(width / 2, 260 + i * 60, `[${s.key}] ${s.name} - ${s.desc}`, {
+            const isAffordable = this.totalCoins >= s.cost;
+            let color = isAffordable ? '#FFFFFF' : '#884444';
+            let costColor = isAffordable ? '#00FF00' : '#FF4444';
+            let text = `[${s.key}] ${s.name} - ${s.desc}`;
+            let costText = `Cost: ${s.cost}`;
+
+            if (isMaxed) {
+                color = '#FF0000'; // Red for MAX
+                costColor = '#FF0000';
+                text = `[${s.key}] ${s.name} - MAX LEVEL`;
+                costText = 'MAX';
+            }
+
+            const txt = this.add.text(width / 2, 260 + i * 60, text, {
                 fontSize: '24px', fill: color, fontStyle: 'bold'
             }).setOrigin(0.5);
 
-            const costTxt = this.add.text(width / 2, 290 + i * 60, `Cost: ${s.cost}`, {
+            const costTxt = this.add.text(width / 2, 290 + i * 60, costText, {
                 fontSize: '18px', fill: costColor
             }).setOrigin(0.5);
 
@@ -226,6 +241,18 @@ export class UpgradeShop extends Phaser.Scene {
 
     selectService(type) {
         let cost = (type === 'ammo') ? 500 : 300;
+
+        // Check Limit
+        const weapon = WeaponConfig[this.selectedWeaponKey];
+        const currentLevel = (type === 'dmg' ? weapon.dmgLevel :
+            (type === 'cd' ? weapon.cdLevel :
+                (type === 'ammo' ? weapon.ammoLevel : 0))) || 0;
+
+        if (currentLevel >= 3) {
+            this.playErrorSound(); // Optional: visual shake is fine too
+            this.cameras.main.shake(100, 0.005);
+            return;
+        }
 
         if (this.totalCoins < cost) {
             this.cameras.main.shake(100, 0.005);
@@ -281,7 +308,8 @@ export class UpgradeShop extends Phaser.Scene {
             }
 
             this.playSuccessSound();
-            this.goBack(true); // Go back to equipment menu
+            // Refresh service menu to show updated stats/Max level immediately
+            this.enterServiceMenu(this.selectedWeaponKey);
         }
     }
 
@@ -324,6 +352,22 @@ export class UpgradeShop extends Phaser.Scene {
             gain.gain.setValueAtTime(0.2, ctx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
             osc.start(); osc.stop(ctx.currentTime + 0.3);
+        } catch (e) { }
+    }
+
+    playErrorSound() {
+        try {
+            const ctx = window.gameAudioCtx;
+            if (!ctx || ctx.state !== 'running') return;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(200, ctx.currentTime);
+            osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.2);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+            osc.start(); osc.stop(ctx.currentTime + 0.2);
         } catch (e) { }
     }
 }

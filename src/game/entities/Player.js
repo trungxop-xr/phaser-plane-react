@@ -29,10 +29,17 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
         // Notify initial HP
         this.emitHpUpdate();
+
+        // Auto-Targeting Properties
+        this.gunRotation = 0; // Relative angle to plane
+        this.lockedTarget = null;
     }
 
     update(cursors, delta, obstacles) {
         if (!this.active) return;
+
+        // Auto-Targeting Update
+        this.updateGunTracking(delta);
 
         // 1. Activation Logic (Hold '0' for 2s)
         if (cursors.key0 && cursors.key0.isDown) {
@@ -108,12 +115,25 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     updateManual(cursors, delta) {
         // Rotation
-        // Rotation - Follow Mouse
+        // Rotation - Follow Mouse (Screen Space)
         const activePointer = this.scene.input.activePointer;
-        const targetAngle = Phaser.Math.Angle.Between(this.x, this.y, activePointer.worldX, activePointer.worldY);
+        const cam = this.scene.cameras.main;
 
-        // Smoothly rotate towards target
-        this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetAngle, 0.05);
+        // Player position in Screen Space
+        const playerScreenX = (this.x - cam.scrollX) * cam.zoom;
+        const playerScreenY = (this.y - cam.scrollY) * cam.zoom;
+
+        // Mouse is already in Screen Space (x, y)
+        // Note: activePointer.x/y are screen coordinates. worldX/worldY are world.
+
+        const dist = Phaser.Math.Distance.Between(playerScreenX, playerScreenY, activePointer.x, activePointer.y);
+
+        if (dist > 20) {
+            const targetAngle = Phaser.Math.Angle.Between(playerScreenX, playerScreenY, activePointer.x, activePointer.y);
+            // Smoothly rotate towards target
+            this.rotation = Phaser.Math.Angle.RotateTo(this.rotation, targetAngle, 0.05);
+        }
+
         this.setAngularVelocity(0);
 
         // Speed Control
@@ -299,5 +319,106 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
             hp: Math.max(0, this.hp),
             maxHp: PlayerConfig.hp
         });
+    }
+
+    updateGunTracking(delta) {
+        const bestTarget = this.findBestTarget();
+        let targetAngle = 0; // Default: 0 relative to plane (fire straight)
+
+        if (bestTarget) {
+            // Calculate absolute angle to target
+            const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, bestTarget.x, bestTarget.y);
+
+            // Calculate relative angle (diff between target angle and plane rotation)
+            let diff = Phaser.Math.Angle.Wrap(angleToTarget - this.rotation);
+
+            // Clamp to +/- 20 degrees (approx 0.35 radians)
+            const maxAngle = Phaser.Math.DegToRad(20);
+            if (Math.abs(diff) <= maxAngle) {
+                targetAngle = diff;
+                this.lockedTarget = bestTarget;
+            } else {
+                // Determine if we should clamp or just lose target? 
+                // Spec says: "Priority: Target within allow angle".
+                // If the BEST target found (filtered by angle) is returned, it IS within angle.
+                // findBestTarget filters by angle, so we just trust diff is valid-ish,
+                // but double check or just clamp to be safe visual-wise.
+                // Actually findBestTarget handles the cone check.
+                targetAngle = Phaser.Math.Clamp(diff, -maxAngle, maxAngle);
+            }
+        } else {
+            this.lockedTarget = null;
+        }
+
+        // Smoothly rotate gun towards targetAngle
+        // Lerp factor
+        const lerpSpeed = 0.1; // Adjust for smoothness
+        this.gunRotation = Phaser.Math.Linear(this.gunRotation, targetAngle, lerpSpeed);
+    }
+
+    findBestTarget() {
+        const range = 500;
+        const maxAngle = Phaser.Math.DegToRad(20); // 20 degrees
+        const enemies = [];
+
+        // Collect potential enemies from scene groups
+        // We assume MainScene has these groups exposed
+        const groups = [
+            this.scene.tanks,
+            this.scene.t95Tanks,
+            this.scene.watchtowers,
+            this.scene.drones,
+            this.scene.hangars,
+            this.scene.flakCannons,
+            this.scene.infantry
+        ];
+
+        groups.forEach(group => {
+            if (group) {
+                group.children.each(e => {
+                    if (e.active) enemies.push(e);
+                });
+            }
+        });
+
+        // Filter and Score
+        let bestCandidate = null;
+        let bestScore = -Infinity; // Higher is better
+
+        // Score = -Distance (closer is better) 
+        // Tie-breaker: -HP (lower HP is better) -> we can use a weighted score
+        // Let's optimize:
+        // Priority 1: Angle (Must be within cone)
+        // Priority 2: Distance (Closest)
+        // Priority 3: HP (Lowest)
+
+        // Since we want Closest first, we can just find all valid candidates then sort.
+        const validCandidates = enemies.filter(e => {
+            const dist = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
+            if (dist > range) return false;
+
+            const angleToEnemy = Phaser.Math.Angle.Between(this.x, this.y, e.x, e.y);
+            const diff = Phaser.Math.Angle.Wrap(angleToEnemy - this.rotation);
+
+            return Math.abs(diff) <= maxAngle;
+        });
+
+        if (validCandidates.length === 0) return null;
+
+        // Sort: primary Distance, secondary HP
+        validCandidates.sort((a, b) => {
+            const distA = Phaser.Math.Distance.Between(this.x, this.y, a.x, a.y);
+            const distB = Phaser.Math.Distance.Between(this.x, this.y, b.x, b.y);
+
+            if (Math.abs(distA - distB) < 10) { // If distance roughly equal (within 10px)
+                // HP check - Assuming 'hp' property exists
+                const hpA = a.hp || 0;
+                const hpB = b.hp || 0;
+                return hpA - hpB; // Lower HP first
+            }
+            return distA - distB; // Closer distance first
+        });
+
+        return validCandidates[0];
     }
 }

@@ -16,7 +16,7 @@ export const WeaponConfig = {
     machineGun: {
         fireRate: 200,
         speed: 600,
-        damage: 15,
+        damage: 10,
         trigger: 'SPACE',
         ammo: -1, // Infinite
         dmgLevel: 0,
